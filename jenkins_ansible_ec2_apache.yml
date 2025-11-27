@@ -8,12 +8,20 @@
     region: "us-east-1"
     ami_id: "ami-0e001c9271cf7f3b9"      # Ubuntu 22.04 LTS
     instance_type: "t3.micro"
-    key_name: "Jenkins_master.pem"       # YOUR key pair name (must exist in region)
+    key_name: "Jenkins_master"           # <-- default AWS Key Pair name (no .pem). Override with -e key_name=...
     ssh_user: "ubuntu"                   # Ubuntu user
     ec2_name: "jenkins-demo-ec2"
     sg_name: "jenkins-demo-sg"
 
   tasks:
+    - name: Debug - show effective variables
+      debug:
+        msg:
+          - "region={{ region }}"
+          - "ami_id={{ ami_id }}"
+          - "key_name={{ key_name }}"
+          - "instance_type={{ instance_type }}"
+
     - name: Create security group
       amazon.aws.ec2_group:
         name: "{{ sg_name }}"
@@ -44,21 +52,19 @@
           Name: "{{ ec2_name }}"
       register: ec2_out
 
-    - name: Debug - show created instance public IP(s) and IDs
+    - name: Debug - show created instance IDs and public IPs
       debug:
         msg:
-          - "Created instances:"
-          - "{{ ec2_out.instances | map(attribute='id') | list }}"
-          - "{{ ec2_out.instances | map(attribute='public_ip_address') | list }}"
+          - "Created instance IDs: {{ ec2_out.instances | map(attribute='id') | list }}"
+          - "Created public IPs: {{ ec2_out.instances | map(attribute='public_ip_address') | list }}"
 
     - name: Add new instance to inventory
       add_host:
         name: "{{ item.public_ip_address }}"
         groups: launched
         ansible_user: "{{ ssh_user }}"
-        # helpful host vars for later use if needed
-        public_dns: "{{ item.public_dns_name | default('') }}"
         public_ip: "{{ item.public_ip_address | default('') }}"
+        public_dns: "{{ item.public_dns_name | default('') }}"
       loop: "{{ ec2_out.instances }}"
 
     - name: Wait for SSH
@@ -77,7 +83,7 @@
     - name: Ensure python is present (for Ansible facts and modules)
       raw: |
         if command -v python3 >/dev/null 2>&1; then exit 0; fi
-        if command -v python >/dev/null 2>&0; then exit 0; fi
+        if command -v python >/dev/null 2>&1; then exit 0; fi
         if [ -x /usr/bin/apt-get ]; then
           apt-get update && apt-get install -y python3
         fi
