@@ -1,38 +1,49 @@
 ---
-# jenkins_ansible_ec2_apache.yml
-# Creates an EC2 instance, registers it in inventory, ensures Jenkins controller
-# knows the instance SSH host key, then connects and installs Apache.
-#
-# IMPORTANT:
-# - Ensure your Jenkins AWS creds have permissions to create EC2, SG, etc.
-# - Ensure the Jenkins SSH credential/private-key corresponds to the AWS KeyPair
-#   name you set in key_name (do NOT append ".pem" in the key_name).
-# - This playbook runs the AWS API tasks on localhost (where ansible runs inside Jenkins).
-
-- name: Create EC2 & prepare for config
+- name: Create EC2 & prepare for config (with preflight checks)
   hosts: localhost
   connection: local
   gather_facts: false
 
   vars:
     region: "us-east-1"
-    ami_id: "ami-0e001c9271cf7f3b9"      # Ubuntu 22.04 LTS (example)
+    ami_id: "ami-0e001c9271cf7f3b9"
     instance_type: "t3.micro"
-    key_name: "Jenkins_master"           # AWS KeyPair NAME (no .pem)
-    ssh_user: "ubuntu"                   # SSH user for the AMI
+    key_name: "Jenkins_master"         # AWS keypair name (no .pem)
+    ssh_user: "ubuntu"
     ec2_name: "jenkins-demo-ec2"
     sg_name: "jenkins-demo-sg"
     demo_tag_name: "jenkins-demo-ec2"
+    subnet_id: ""                      # <--- set this to a valid public subnet id if default subnets absent
     wait_for_ssh_timeout: 300
 
   tasks:
-    - name: Debug - show effective variables
-      debug:
-        msg:
-          - "region={{ region }}"
-          - "ami_id={{ ami_id }}"
-          - "key_name={{ key_name }}"
-          - "instance_type={{ instance_type }}"
+    - name: Print vars
+      debug: var=key_name
+
+    - name: Validate AWS credentials by calling STS
+      shell: aws sts get-caller-identity --region "{{ region }}"
+      register: sts_info
+      failed_when: sts_info.rc != 0
+    - name: Show caller
+      debug: var=sts_info.stdout
+
+    - name: Validate keypair exists
+      shell: aws ec2 describe-key-pairs --key-names "{{ key_name }}" --region "{{ region }}"
+      register: kp_check
+      failed_when: kp_check.rc != 0
+      ignore_errors: false
+    - name: Show keypair check
+      debug: var=kp_check.stdout
+
+    - name: If subnet_id not provided, attempt to pick a public subnet
+      set_fact:
+        subnet_id: "{{ subnet_id | default((lookup('pipe','aws ec2 describe-subnets --region ' + region + ' --query \"Subnets[?MapPublicIpOnLaunch==`true`].SubnetId\" --output text') ).split()[0]) }}"
+      when: subnet_id == ""
+
+    - name: Fail early if no subnet_id found
+      fail:
+        msg: "No subnet_id found. Provide a valid subnet_id variable or ensure there is a subnet with MapPublicIpOnLaunch==true in region {{ region }}. Use 'aws ec2 describe-subnets --region {{ region }}'."
+      when: subnet_id is undefined or subnet_id == ""
 
     - name: Create security group
       amazon.aws.ec2_group:
@@ -51,109 +62,81 @@
         state: present
       register: sg_out
 
-    - name: Launch EC2 instance (Ubuntu)
+    - name: Launch EC2 instance
       amazon.aws.ec2_instance:
         name: "{{ ec2_name }}"
         key_name: "{{ key_name }}"
         instance_type: "{{ instance_type }}"
         image_id: "{{ ami_id }}"
         network:
-          security_groups: [ "{{ sg_out.group_id }}" ]
+          subnet_id: "{{ subnet_id }}"
+          security_groups: ["{{ sg_out.group_id }}"]
+          assign_public_ip: yes
         region: "{{ region }}"
+        count: 1
         wait: yes
         wait_timeout: 600
-        count: 1
         instance_tags:
           Name: "{{ demo_tag_name }}"
-        assign_public_ip: yes
       register: ec2_out
+      failed_when: ec2_out is failed or (ec2_out.instances | length) == 0
+      ignore_errors: false
 
-    - name: Debug - show raw ec2_out structure (useful if things still odd)
-      debug:
-        var: ec2_out
+    - name: Debug ec2_out
+      debug: var=ec2_out
 
-    - name: Normalize instances list into a simple list of dicts (id, public_ip)
+    # Continue same post-creation steps as before (normalize, add_host, ssh-keyscan, wait_for, etc.)
+    - name: Normalize instances
       set_fact:
         created_instances: >-
           {{
             ec2_out.instances
             | map('combine', {
                 'instance_id': (item.instance_id if (item.instance_id is defined) else (item.id if item.id is defined else '')),
-                'public_ip': (item.public_ip_address if (item.public_ip_address is defined) else (item.public_ip if (item.public_ip is defined) else ''))
+                'public_ip': (item.public_ip_address if (item.public_ip_address is defined) else (item.public_ip if item.public_ip is defined else ''))
               })
             | list
           }}
-      vars:
-        # map() uses `item` in combine expression; kept for clarity
       loop: "{{ ec2_out.instances }}"
       loop_control:
         label: "{{ item.instance_id | default(item.id | default('unknown')) }}"
-      when: ec2_out.instances is defined
 
-    - name: Debug - show created instance IDs and public IPs
+    - name: Debug created_instances
       debug:
-        msg:
-          - "Created instance IDs: {{ created_instances | map(attribute='instance_id') | list }}"
-          - "Created public IPs: {{ created_instances | map(attribute='public_ip') | list }}"
+        var: created_instances
 
-    - name: Add new instance(s) to inventory (group 'launched')
+    - name: Add to inventory
       add_host:
         name: "{{ item.public_ip }}"
         ansible_user: "{{ ssh_user }}"
-        ansible_ssh_private_key_file: ""   # we rely on Jenkins sshagent; keep blank
         groups: launched
       loop: "{{ created_instances }}"
       when: created_instances | length > 0
 
-    - name: Ensure Jenkins controller ~/.ssh exists
-      file:
-        path: "{{ lookup('env','HOME') }}/.ssh"
-        state: directory
-        mode: '0700'
+    - name: Ensure controller known_hosts and add hosts via ssh-keyscan (same as earlier)
       delegate_to: localhost
-      run_once: true
-
-    - name: Add launched hosts to Jenkins known_hosts using ssh-keyscan
-      delegate_to: localhost
-      run_once: true
-      vars:
-        known_hosts_file: "{{ lookup('env','HOME') }}/.ssh/known_hosts"
-      loop: "{{ groups['launched'] | default([]) }}"
-      loop_control:
-        label: "{{ item }}"
-      when: groups['launched'] is defined and groups['launched'] | length > 0
       block:
-        - name: Compute host_to_scan
-          set_fact:
-            host_to_scan: "{{ item }}"
-        - name: Ensure we can ssh-keyscan the host and add to known_hosts
+        - file:
+            path: "{{ lookup('env','HOME') }}/.ssh"
+            state: directory
+            mode: '0700'
+        - name: Add host keys
           shell: |
-            set -e
-            KNOWN="{{ known_hosts_file }}"
-            HOST="{{ host_to_scan }}"
-            # Create known_hosts file if missing
-            mkdir -p "$(dirname "$KNOWN")"
+            KNOWN="{{ lookup('env','HOME') }}/.ssh/known_hosts"
+            HOST="{{ item }}"
             touch "$KNOWN"
             chmod 600 "$KNOWN" || true
-            # Remove any existing line for this host to avoid duplicates
             if grep -q -F "$HOST" "$KNOWN" 2>/dev/null; then
               grep -v -F "$HOST" "$KNOWN" > "${KNOWN}.tmp" || true
               mv -f "${KNOWN}.tmp" "$KNOWN"
             fi
-            # Append hostkey (retry a couple times in case host is still initializing)
-            MAX=6
-            COUNT=0
-            while [ $COUNT -lt $MAX ]; do
-              ssh-keyscan -T 5 -H "$HOST" >> "$KNOWN" && break || true
-              COUNT=$((COUNT+1))
-              sleep 2
-            done
-            # show last line for debugging
-            tail -n 1 "$KNOWN" || true
+            ssh-keyscan -T 5 -H "$HOST" >> "$KNOWN" || true
           args:
             executable: /bin/bash
+      loop: "{{ groups['launched'] | default([]) }}"
+      when: groups['launched'] is defined and groups['launched'] | length > 0
 
-    - name: Wait for SSH on newly created instances (by resolved public IP)
+    - name: Wait for SSH
       wait_for:
         host: "{{ item }}"
         port: 22
@@ -162,43 +145,19 @@
       loop: "{{ groups['launched'] | default([]) }}"
       when: groups['launched'] is defined and groups['launched'] | length > 0
 
-    - name: Get instance details (public IP, dns) via ec2_instance_info
-      amazon.aws.ec2_instance_info:
-        region: "{{ region }}"
-        filters:
-          "tag:Name": "{{ demo_tag_name }}"
-      register: ec2_info
-
-    - name: Debug - show fetched ec2_info
-      debug:
-        var: ec2_info
-
-  # end tasks for localhost play
-
+# second play installs apache (same as previous)
 - name: Install Apache (Ubuntu)
   hosts: launched
   become: yes
   gather_facts: yes
-  vars:
-    # optionally override remote become user if needed (default is root)
   tasks:
-    - name: Wait for SSH to be truly ready per host
-      wait_for:
-        port: 22
-        host: "{{ inventory_hostname }}"
-        timeout: 60
-
-    - name: Update apt cache
+    - name: Update apt and install apache
       apt:
         update_cache: yes
-        cache_valid_time: 3600
-
-    - name: Install Apache2
-      apt:
         name: apache2
         state: present
 
-    - name: Start and enable apache
+    - name: Ensure apache started
       service:
         name: apache2
         state: started
@@ -208,5 +167,5 @@
       copy:
         dest: /var/www/html/index.html
         content: |
-          <h1>Apache deployed using Jenkins + Ansible on Ubuntu!</h1>
-          <p>Server: {{ inventory_hostname }}</p>
+          <h1>Apache deployed via Jenkins+Ansible</h1>
+          <p>{{ inventory_hostname }}</p>
