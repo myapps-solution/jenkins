@@ -89,7 +89,10 @@ export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
 
 chmod 600 "$SSH_KEY_FILE"
 
-ansible-playbook jenkins_ansible_ec2_apache.yml -e "region=${REGION} ami_id=${AMI_ID} key_name=${KEY_NAME}" --private-key "$SSH_KEY_FILE"
+# disable host key checking to avoid SSH trust errors
+ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook jenkins_ansible_ec2_apache.yml \
+  -e "region=${REGION} ami_id=${AMI_ID} key_name=${KEY_NAME}" \
+  --private-key "$SSH_KEY_FILE"
 
 sleep 5
 
