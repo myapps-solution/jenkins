@@ -1,0 +1,110 @@
+# Jenkins + Ansible EC2 Demo
+
+This repository demonstrates how to use **Jenkins pipelines** together with **Ansible** to provision and configure EC2 instances on AWS. The pipeline launches an Ubuntu EC2 instance, installs Apache, performs a smoke test, and optionally terminates the instance.
+
+---
+
+## Prerequisites
+
+1. **Jenkins Server Setup**
+   - Install Jenkins on a server (Ubuntu/Debian recommended).
+   - Ensure Jenkins has access to:
+     - `git`
+     - `python3`, `pip`, `venv`
+     - AWS CLI
+     - Ansible
+
+2. **AWS IAM User**
+   - Create an IAM user: **`jenkins-ansible-ec2-user`**
+   - Attach a custom policy: **`JenkinsAnsibleEC2Policy`**
+     - This policy must allow EC2 actions such as:
+       - `ec2:DescribeInstances`
+       - `ec2:RunInstances`
+       - `ec2:TerminateInstances`
+       - `ec2:ImportKeyPair`
+       - `ec2:CreateSecurityGroup`
+       - `ec2:AuthorizeSecurityGroupIngress`
+   - Download the **Access Key ID** and **Secret Access Key** for this user.
+
+3. **SSH Key Pair**
+   - Generate or use an existing PEM key (e.g. `jenkins.pem`).
+   - Import the public key into AWS EC2 as a key pair (`Jenkins_master.pem`).
+   - Store the private PEM file securely.
+
+---
+
+## Jenkins Credentials Setup
+
+In Jenkins, add the following credentials:
+
+- **AWS Access Key ID**
+  - Type: Secret text
+  - ID: `aws-access-key-id`
+  - Value: IAM user’s Access Key ID
+
+- **AWS Secret Access Key**
+  - Type: Secret text
+  - ID: `aws-secret-access-key`
+  - Value: IAM user’s Secret Access Key
+
+- **SSH Private Key**
+  - Type: SSH Username with private key
+  - ID: `jenkins-ssh-key`
+  - Username: `ubuntu`
+  - Private Key: contents of `jenkins.pem`
+
+---
+
+## Pipeline Flow
+
+1. **Checkout**
+   - Pulls the Jenkinsfile and playbook from this repo.
+
+2. **Prepare Python venv & Tools**
+   - Creates a Python virtual environment.
+   - Installs Ansible, AWS CLI, boto3, and required collections.
+
+3. **Ensure AWS KeyPair**
+   - Imports the Jenkins PEM public key into AWS if not already present.
+
+4. **Run Playbook**
+   - Executes `jenkins_ansible_ec2_apache.yml`.
+   - Launches an EC2 instance with Apache installed.
+   - Saves instance public IPs to `instance_ips.txt`.
+
+5. **Smoke Test (optional)**
+   - Performs a simple HTTP GET request against the Apache server.
+
+6. **Cleanup**
+   - If `AUTO_TERMINATE=true`, terminates all demo instances tagged `jenkins-demo-ec2`.
+
+---
+
+## Parameters
+
+- `AMI_ID` – Ubuntu AMI ID (default: `ami-0e001c9271cf7f3b9`)
+- `REGION` – AWS region (default: `us-east-1`)
+- `AUTO_TERMINATE` – Boolean flag to terminate instances after run (default: `false`)
+
+---
+
+## Files
+
+- **Jenkinsfile** – Defines the pipeline stages.
+- **jenkins_ansible_ec2_apache.yml** – Ansible playbook to launch EC2 and install Apache.
+- **instance_ips.txt** – Generated file containing public IPs of launched instances.
+
+---
+
+## Notes
+
+- Host key verification is disabled (`ANSIBLE_HOST_KEY_CHECKING=False`) to allow Ansible to connect to new EC2 instances without manual `known_hosts` management.
+- Ensure your Jenkins server has outbound internet access to reach AWS APIs and Galaxy collections.
+- Security groups created by the playbook allow inbound
+
+
+For this jenkins and ansible setup 
+ 1.have to create jenkins server setup and add user(jenkins-ansible-ec2-user) and policy(JenkinsAnsibleEC2Policy )
+ 2. add jenkins.pem key details(Jenkins key) on credentials and policy access key and id too on credentials
+
+
