@@ -8,7 +8,7 @@
     region: "us-east-1"
     ami_id: "ami-0e001c9271cf7f3b9"
     instance_type: "t3.micro"
-    key_name: "Jenkins_master.pem"     # default; overridden from Jenkins if passed
+    key_name: "Jenkins_master.pem"     # default; overridden from Jenkins
     ssh_user: "ubuntu"
     ec2_name: "jenkins-demo-ec2"
     sg_name: "jenkins-demo-sg"
@@ -58,53 +58,3 @@
           {{ ip }}
           {% endfor %}
       delegate_to: localhost
-
-    - name: Add new instance to inventory
-      add_host:
-        name: "{{ item.public_ip_address }}"
-        groups: launched
-        ansible_user: "{{ ssh_user }}"
-        public_ip: "{{ item.public_ip_address | default('') }}"
-      loop: "{{ ec2_out.instances }}"
-
-    - name: Wait for SSH
-      wait_for:
-        host: "{{ item.public_ip_address }}"
-        port: 22
-        timeout: 300
-      loop: "{{ ec2_out.instances }}"
-
-- name: Install Apache (Ubuntu)
-  hosts: launched
-  become: yes
-  gather_facts: yes
-
-  tasks:
-    - name: Ensure python present (for Ansible facts/modules)
-      raw: |
-        if command -v python3 >/dev/null 2>&1; then exit 0; fi
-        if command -v python >/dev/null 2>&1; then exit 0; fi
-        if [ -x /usr/bin/apt-get ]; then
-          apt-get update && apt-get install -y python3
-        fi
-      changed_when: false
-      ignore_errors: true
-
-    - name: Install Apache2
-      apt:
-        name: apache2
-        state: present
-        update_cache: yes
-
-    - name: Start and enable apache
-      service:
-        name: apache2
-        state: started
-        enabled: yes
-
-    - name: Create demo page
-      copy:
-        dest: /var/www/html/index.html
-        content: |
-          <h1>Apache deployed using Jenkins + Ansible on Ubuntu!</h1>
-          <p>Server: {{ inventory_hostname }}</p>
