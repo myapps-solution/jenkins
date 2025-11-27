@@ -73,12 +73,24 @@
 
     - name: Add new instances to inventory (normalized)
       add_host:
-        name: "{{ (item.public_ip_address | default(item.public_ip | default(item.PublicIpAddress | default('')))) }}"
+        name: "{{ (
+                   item.public_ip_address
+                   | default(item.public_ip | default(item.PublicIpAddress | default('')))
+                 ) }}"
         groups: launched
         ansible_user: "{{ ssh_user }}"
-        ansible_host: "{{ (item.public_ip_address | default(item.public_ip | default(item.PublicIpAddress | default(''))) ) }}"
-        public_ip: "{{ (item.public_ip_address | default(item.public_ip | default(item.PublicIpAddress | default(''))) ) }}"
-        public_dns: "{{ (item.public_dns_name | default(item.public_dns | default(item.PublicDnsName | default(''))) ) }}"
+        ansible_host: "{{ (
+                        item.public_ip_address
+                        | default(item.public_ip | default(item.PublicIpAddress | default('')))
+                      ) }}"
+        public_ip: "{{ (
+                        item.public_ip_address
+                        | default(item.public_ip | default(item.PublicIpAddress | default('')))
+                      ) }}"
+        public_dns: "{{ (
+                        item.public_dns_name
+                        | default(item.public_dns | default(item.PublicDnsName | default('')))
+                      ) }}"
       loop: "{{ ec2_info.instances }}"
       when: (item.public_ip_address is defined) or (item.public_ip is defined) or (item.PublicIpAddress is defined) or (item.public_dns_name is defined) or (item.public_dns is defined) or (item.PublicDnsName is defined)
 
@@ -87,9 +99,9 @@
         msg: "No public IP found in ec2_info.instances; listing instance_ids: {{ ec2_out.instance_ids }}"
       when: groups['launched'] is not defined or groups['launched'] | length == 0
 
-    - name: Wait for SSH on newly created instances (by public IP)
+    - name: Wait for SSH on newly created instances (by resolved public IP)
       wait_for:
-        host: "{{ item.public_ip }}"
+        host: "{{ hostvars[item].ansible_host | default(hostvars[item].public_ip | default(item)) }}"
         port: 22
         timeout: 600
       loop: "{{ groups['launched'] | default([]) }}"
