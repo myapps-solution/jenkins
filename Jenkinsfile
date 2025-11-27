@@ -38,7 +38,7 @@ ansible-galaxy collection install amazon.aws --force
         withCredentials([
           string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
           string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
-          file(credentialsId: 'jenkins-ssh-key', variable: 'SSH_KEY_FILE')   // ✅ fixed ID
+          sshUserPrivateKey(credentialsId: 'jenkins-ssh-key', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
         ]) {
           sh '''
             bash -lc '
@@ -77,7 +77,7 @@ rm -f "$PUBKEY_FILE"
         withCredentials([
           string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
           string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
-          file(credentialsId: 'jenkins-ssh-key', variable: 'SSH_KEY_FILE')   // ✅ fixed ID
+          sshUserPrivateKey(credentialsId: 'jenkins-ssh-key', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
         ]) {
           sh '''
             bash -lc '
