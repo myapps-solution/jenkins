@@ -9,7 +9,7 @@ pipeline {
 
   environment {
     DEMO_TAG_NAME = 'jenkins-demo-ec2'
-    KEY_NAME      = 'Jenkins_master.pem'   // keep the exact name you used in playbook
+    KEY_NAME      = 'Jenkins_master.pem'
   }
 
   stages {
@@ -38,7 +38,7 @@ ansible-galaxy collection install amazon.aws --force
         withCredentials([
           string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
           string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
-          file(credentialsId: 'jenkins-ssh-file', variable: 'SSH_KEY_FILE')
+          file(credentialsId: 'jenkins-ssh-key', variable: 'SSH_KEY_FILE')   // ✅ fixed ID
         ]) {
           sh '''
             bash -lc '
@@ -77,7 +77,7 @@ rm -f "$PUBKEY_FILE"
         withCredentials([
           string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
           string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
-          file(credentialsId: 'jenkins-ssh-file', variable: 'SSH_KEY_FILE')
+          file(credentialsId: 'jenkins-ssh-key', variable: 'SSH_KEY_FILE')   // ✅ fixed ID
         ]) {
           sh '''
             bash -lc '
