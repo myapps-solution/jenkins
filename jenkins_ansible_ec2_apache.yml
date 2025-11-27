@@ -8,8 +8,8 @@
     region: "us-east-1"
     ami_id: "ami-0e001c9271cf7f3b9"      # Ubuntu 22.04 LTS
     instance_type: "t3.micro"
-    key_name: "Jenkins_master"           # <-- default AWS Key Pair name (no .pem). Override with -e key_name=...
-    ssh_user: "ubuntu"                   # Ubuntu user
+    key_name: "Jenkins_master"           # <-- ensure this matches the AWS Key Pair name
+    ssh_user: "ubuntu"
     ec2_name: "jenkins-demo-ec2"
     sg_name: "jenkins-demo-sg"
 
@@ -52,27 +52,48 @@
           Name: "{{ ec2_name }}"
       register: ec2_out
 
-    - name: Debug - show created instance IDs and public IPs
+    - name: Debug - show raw ec2_out structure (useful if things still odd)
       debug:
-        msg:
-          - "Created instance IDs: {{ ec2_out.instances | map(attribute='id') | list }}"
-          - "Created public IPs: {{ ec2_out.instances | map(attribute='public_ip_address') | list }}"
+        var: ec2_out
 
-    - name: Add new instance to inventory
+    - name: Ensure we have instance IDs from module output
+      fail:
+        msg: "No instance_ids returned by ec2 module (ec2_out.instance_ids is empty)."
+      when: ec2_out.instance_ids is not defined or ec2_out.instance_ids | length == 0
+
+    - name: Get instance details (public IP, dns) via ec2_instance_info
+      amazon.aws.ec2_instance_info:
+        region: "{{ region }}"
+        instance_ids: "{{ ec2_out.instance_ids }}"
+      register: ec2_info
+
+    - name: Debug - show fetched ec2_info
+      debug:
+        var: ec2_info
+
+    - name: Add new instances to inventory (normalized)
       add_host:
-        name: "{{ item.public_ip_address }}"
+        name: "{{ (item.public_ip_address | default(item.public_ip | default(item.PublicIpAddress | default('')))) }}"
         groups: launched
         ansible_user: "{{ ssh_user }}"
-        public_ip: "{{ item.public_ip_address | default('') }}"
-        public_dns: "{{ item.public_dns_name | default('') }}"
-      loop: "{{ ec2_out.instances }}"
+        ansible_host: "{{ (item.public_ip_address | default(item.public_ip | default(item.PublicIpAddress | default(''))) ) }}"
+        public_ip: "{{ (item.public_ip_address | default(item.public_ip | default(item.PublicIpAddress | default(''))) ) }}"
+        public_dns: "{{ (item.public_dns_name | default(item.public_dns | default(item.PublicDnsName | default(''))) ) }}"
+      loop: "{{ ec2_info.instances }}"
+      when: (item.public_ip_address is defined) or (item.public_ip is defined) or (item.PublicIpAddress is defined) or (item.public_dns_name is defined) or (item.public_dns is defined) or (item.PublicDnsName is defined)
 
-    - name: Wait for SSH
+    - name: If add_host loop produced zero hosts -- try fallback using instance_ids
+      debug:
+        msg: "No public IP found in ec2_info.instances; listing instance_ids: {{ ec2_out.instance_ids }}"
+      when: groups['launched'] is not defined or groups['launched'] | length == 0
+
+    - name: Wait for SSH on newly created instances (by public IP)
       wait_for:
-        host: "{{ item.public_ip_address }}"
+        host: "{{ item.public_ip }}"
         port: 22
-        timeout: 300
-      loop: "{{ ec2_out.instances }}"
+        timeout: 600
+      loop: "{{ groups['launched'] | default([]) }}"
+      when: groups['launched'] is defined and groups['launched'] | length > 0
 
 - name: Install Apache (Ubuntu)
   hosts: launched
