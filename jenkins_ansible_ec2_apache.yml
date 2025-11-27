@@ -8,16 +8,12 @@
     region: "us-east-1"
     ami_id: "ami-0e001c9271cf7f3b9"
     instance_type: "t3.micro"
-    key_name: "Jenkins_master.pem"     # default; will be overridden from Jenkins if needed
+    key_name: "Jenkins_master.pem"     # default; overridden from Jenkins if passed
     ssh_user: "ubuntu"
     ec2_name: "jenkins-demo-ec2"
     sg_name: "jenkins-demo-sg"
 
   tasks:
-    - name: Use provided key_name if passed
-      set_fact:
-        key_name: "{{ key_name | default(key_name) }}"
-
     - name: Create security group
       amazon.aws.ec2_group:
         name: "{{ sg_name }}"
