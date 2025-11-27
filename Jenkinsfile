@@ -35,7 +35,6 @@ ansible-galaxy collection install amazon.aws --force
 
     stage('Ensure AWS KeyPair exists (import from PEM)') {
       steps {
-        // Bind AWS creds and the PEM file
         withCredentials([
           string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
           string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
@@ -49,10 +48,8 @@ export PATH="$PWD/.venv/bin:$PATH"
 export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
 export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
 
-# ensure private key permissions locally
 chmod 600 "$SSH_KEY_FILE"
 
-# derive public key from private key
 PUBKEY_FILE="$(mktemp)"
 if ! ssh-keygen -y -f "$SSH_KEY_FILE" > "$PUBKEY_FILE" 2>/dev/null; then
   echo "Failed to derive public key from private key. Ensure the file is a valid OpenSSH private key."
@@ -64,12 +61,10 @@ if aws ec2 describe-key-pairs --key-names "${KEY_NAME}" --region ${REGION} >/dev
   echo "Key pair ${KEY_NAME} already exists."
 else
   echo "Key pair ${KEY_NAME} not found — importing using provided PEM-derived public key..."
-  # import the public key with the exact KEY_NAME you want
-  aws ec2 import-key-pair --key-name "${KEY_NAME}" --public-key-material fileb://"${PUBKEY_FILE}" --region ${REGION}
+  aws ec2 import-key-pair --key-name "${KEY_NAME}" --public-key-material "$(cat ${PUBKEY_FILE})" --region ${REGION}
   echo "Imported key pair ${KEY_NAME}."
 fi
 
-# cleanup
 rm -f "$PUBKEY_FILE"
 '
           '''
@@ -79,7 +74,6 @@ rm -f "$PUBKEY_FILE"
 
     stage('Run Playbook') {
       steps {
-        // bind AWS creds and pass private key path to ansible-playbook
         withCredentials([
           string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
           string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
@@ -93,15 +87,12 @@ export PATH="$PWD/.venv/bin:$PATH"
 export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
 export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
 
-# ensure pem permissions
 chmod 600 "$SSH_KEY_FILE"
 
-# run ansible and pass KEY_NAME so playbook uses exact name
 ansible-playbook jenkins_ansible_ec2_apache.yml -e "region=${REGION} ami_id=${AMI_ID} key_name=${KEY_NAME}" --private-key "$SSH_KEY_FILE"
 
 sleep 5
 
-# print instance_ips.txt (if playbook created it)
 if [ -f "instance_ips.txt" ]; then
   echo "---- instance_ips.txt ----"
   cat instance_ips.txt
@@ -109,7 +100,6 @@ else
   echo "instance_ips.txt not found"
 fi
 
-# show instances with tag (fallback)
 aws ec2 describe-instances --filters "Name=tag:Name,Values=${DEMO_TAG_NAME}" "Name=instance-state-name,Values=pending,running" \
   --query "Reservations[].Instances[].[InstanceId,PublicIpAddress,State.Name]" --output table --region ${REGION} || true
 '
